@@ -540,3 +540,78 @@ fn kb_custom_modifiers_match_exactly() {
     assert_eq!(code, Some(0), "bare Delete must not fire Shift+Delete");
     assert_eq!(stdout, "banana");
 }
+
+// ── --kb-custom KEY=PROMPT (confirm card) ───────────────────────────────────
+
+/// A prompted binding opens the card instead of exiting; Enter then accepts
+/// with the binding's exit code. `--filter ban` leaves the caret at the end
+/// of the query, so Right is free to fire.
+#[test]
+fn kb_custom_confirm_enter_accepts() {
+    let Some((code, stdout)) = kb_custom_run(&["Right=Forget?"], &[Key::Right, Key::Return]) else {
+        return;
+    };
+    assert_eq!(code, Some(10), "Enter on the confirm card must exit 10");
+    assert_eq!(stdout, "banana");
+}
+
+/// Esc dismisses the card; the following Enter is a plain accept.
+#[test]
+fn kb_custom_confirm_escape_dismisses() {
+    let Some((code, stdout)) =
+        kb_custom_run(&["Right=Forget?"], &[Key::Right, Key::Escape, Key::Return])
+    else {
+        return;
+    };
+    assert_eq!(code, Some(0), "after Esc, Enter must be a normal accept");
+    assert_eq!(stdout, "banana");
+}
+
+/// Left dismisses the card too.
+#[test]
+fn kb_custom_confirm_left_dismisses() {
+    let Some((code, _)) = kb_custom_run(&["Right=Forget?"], &[Key::Right, Key::Left, Key::Return])
+    else {
+        return;
+    };
+    assert_eq!(code, Some(0), "after Left, Enter must be a normal accept");
+}
+
+/// With the caret mid-query, Right moves the caret instead of firing.
+#[test]
+fn kb_custom_right_yields_to_caret_movement() {
+    let Some((code, _)) = kb_custom_run(&["Right=Forget?"], &[Key::Left, Key::Right, Key::Return])
+    else {
+        return;
+    };
+    assert_eq!(code, Some(0), "Right after Left only moves the caret");
+}
+
+/// While the card is open, list navigation is swallowed: the accepted row is
+/// the one the card was opened on.
+#[test]
+fn kb_custom_confirm_blocks_navigation() {
+    if !require_tools() {
+        return;
+    }
+    let sway = Sway::headless();
+    let pikr = Pikr::spawn(
+        &sway,
+        &["--dmenu", "--kb-custom", "Right=Forget?"],
+        Some("apple\nbanana\ncherry\n"),
+    )
+    .unwrap();
+    let out = pikr
+        .wait_with_retry(Duration::from_secs(15), Duration::from_millis(1000), || {
+            let _ = Wtype::new(&sway)
+                .keys(&[Key::F12, Key::Right, Key::Down, Key::Down, Key::Return])
+                .send();
+        })
+        .unwrap();
+    assert_eq!(out.exit_code, Some(10), "stderr:\n{}", out.stderr);
+    assert_eq!(
+        out.stdout.trim(),
+        "apple",
+        "Down must not move the selection under the card"
+    );
+}

@@ -3,7 +3,7 @@
 use clap::{ArgAction, Parser, ValueEnum};
 use std::path::PathBuf;
 
-pub use crate::picker::keyspec::KeySpec;
+pub use crate::picker::keyspec::KbCustom;
 pub use crate::picker::state::VimMode;
 
 /// Exit code for the first `--kb-custom` binding; the Nth binding exits
@@ -75,14 +75,17 @@ pub struct Cli {
     /// second, and so on (rofi's `-kb-custom-N`), so the calling script can
     /// tell which key was used. Repeatable, up to 19. KEY is a chord such as
     /// `Shift+Delete`, `Ctrl+d`, `Alt+Right` or `F2`; bindings take
-    /// precedence over the built-in keymap.
+    /// precedence over the built-in keymap. `KEY=PROMPT` shows PROMPT in a
+    /// confirm card on the highlighted row first: Enter accepts, Esc or Left
+    /// dismisses. Left/Right/Home/End bindings fire only when the query
+    /// caret can't move that way, so they don't steal caret movement.
     #[arg(
         long = "kb-custom",
-        value_name = "KEY",
+        value_name = "KEY[=PROMPT]",
         requires = "dmenu",
         action = ArgAction::Append
     )]
-    pub kb_custom: Vec<KeySpec>,
+    pub kb_custom: Vec<KbCustom>,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,11 +228,17 @@ mod tests {
     #[test]
     fn kb_custom_repeatable_in_order() {
         let cli = parse(&["-d", "--kb-custom", "Shift+Delete", "--kb-custom", "Ctrl+d"]);
-        let want: Vec<KeySpec> = ["Shift+Delete", "Ctrl+d"]
+        let want: Vec<KbCustom> = ["Shift+Delete", "Ctrl+d"]
             .iter()
             .map(|s| s.parse().unwrap())
             .collect();
         assert_eq!(cli.kb_custom, want);
+    }
+
+    #[test]
+    fn kb_custom_with_confirm_prompt() {
+        let cli = parse(&["-d", "--kb-custom", "Right=Forget?"]);
+        assert_eq!(cli.kb_custom[0].confirm.as_deref(), Some("Forget?"));
     }
 
     #[test]

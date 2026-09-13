@@ -1,4 +1,5 @@
-//! Key specs for `--kb-custom` — `Shift+Delete`, `Ctrl+d`, `Alt+Right`, `F2`.
+//! Key specs for `--kb-custom` — `Shift+Delete`, `Ctrl+d`, `Alt+Right`, `F2`,
+//! optionally with a confirm prompt: `Right=Forget?`.
 
 use std::fmt;
 use std::str::FromStr;
@@ -24,6 +25,11 @@ enum SpecKey {
 }
 
 impl KeySpec {
+    /// True when this spec's key is `named`, whatever the modifiers.
+    pub fn is_named(&self, named: NamedKey) -> bool {
+        self.key == SpecKey::Named(named)
+    }
+
     /// True when `key` pressed with `mods` is this chord. Modifiers must match
     /// exactly, so `Delete` does not fire on `Shift+Delete` and vice versa.
     pub fn matches(&self, key: &Key, mods: Modifiers) -> bool {
@@ -123,6 +129,40 @@ fn parse_key(name: &str) -> Option<SpecKey> {
         },
     };
     Some(SpecKey::Named(named))
+}
+
+/// One `--kb-custom` binding: `KEY` or `KEY=PROMPT`. With a prompt the key
+/// shows a confirm card on the highlighted row instead of accepting at once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KbCustom {
+    pub key: KeySpec,
+    pub confirm: Option<String>,
+}
+
+impl FromStr for KbCustom {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // The first `=` that isn't the key itself separates KEY from PROMPT:
+        // `==Delete?` binds `=`, and `Ctrl+==Delete?` binds `Ctrl+=`.
+        let split = s
+            .char_indices()
+            .find(|&(i, c)| c == '=' && i > 0 && !s[..i].ends_with('+'));
+        let (key, confirm) = match split {
+            Some((i, _)) => (&s[..i], Some(&s[i + 1..])),
+            None => (s, None),
+        };
+        let confirm = match confirm {
+            Some(p) if p.trim().is_empty() => {
+                return Err(format!("empty confirm prompt in `{s}`"));
+            }
+            other => other.map(str::to_owned),
+        };
+        Ok(KbCustom {
+            key: key.parse()?,
+            confirm,
+        })
+    }
 }
 
 impl fmt::Display for KeySpec {
@@ -237,6 +277,47 @@ mod tests {
     #[test]
     fn rejects_repeated_modifier() {
         assert!("Ctrl+Ctrl+d".parse::<KeySpec>().is_err());
+    }
+
+    #[test]
+    fn kb_custom_without_prompt() {
+        let b: KbCustom = "Shift+Delete".parse().unwrap();
+        assert_eq!(b.key, "Shift+Delete".parse().unwrap());
+        assert_eq!(b.confirm, None);
+    }
+
+    #[test]
+    fn kb_custom_with_prompt() {
+        let b: KbCustom = "Right=Forget?".parse().unwrap();
+        assert!(b.key.is_named(NamedKey::ArrowRight));
+        assert_eq!(b.confirm.as_deref(), Some("Forget?"));
+    }
+
+    #[test]
+    fn kb_custom_prompt_may_contain_equals() {
+        let b: KbCustom = "F2=Set a=b?".parse().unwrap();
+        assert_eq!(b.confirm.as_deref(), Some("Set a=b?"));
+    }
+
+    #[test]
+    fn kb_custom_equals_as_the_key() {
+        let bare: KbCustom = "==Delete?".parse().unwrap();
+        assert!(bare.key.matches(&Key::Character("=".into()), m(NONE)));
+        assert_eq!(bare.confirm.as_deref(), Some("Delete?"));
+        let ctrl: KbCustom = "Ctrl+==Delete?".parse().unwrap();
+        assert!(
+            ctrl.key
+                .matches(&Key::Character("=".into()), mods(true, false, false, false))
+        );
+        assert_eq!(ctrl.confirm.as_deref(), Some("Delete?"));
+        let no_prompt: KbCustom = "Ctrl+=".parse().unwrap();
+        assert_eq!(no_prompt.confirm, None);
+    }
+
+    #[test]
+    fn kb_custom_rejects_empty_prompt() {
+        assert!("Right=".parse::<KbCustom>().is_err());
+        assert!("Right=  ".parse::<KbCustom>().is_err());
     }
 
     #[test]

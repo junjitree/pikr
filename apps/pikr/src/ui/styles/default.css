@@ -92,6 +92,17 @@
   margin: 0 0 0 10px;
 }
 
+/* Confirm card for `--kb-custom KEY=PROMPT`, at the right edge of the
+ * highlighted row. Visibility is reactive and stays inline. */
+.confirm-card {
+  color: {bg};
+  background-color: {accent};
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-family: {font_family};
+  font-size: {font_size}px;
+}
+
 /* Result-list row container. Border and bg are reactive and stay inline. */
 .row {
   width: 100%;

@@ -16,6 +16,11 @@ and this project adheres to
   offer a second action per row (forget, delete, copy). Keys are chords such as
   `Shift+Delete`, `Ctrl+d` or `F2`, matched with exact modifiers and taking
   precedence over the built-in keymap. Custom accepts skip frecency and history.
+- `--kb-custom KEY=PROMPT`: show `PROMPT` in a confirm card on the highlighted
+  row before accepting. Enter accepts with the binding's exit code; Esc or Left
+  dismisses.
+- `Left`/`Right`/`Home`/`End` bindings fire only when the query caret can't move
+  that way, so binding them doesn't break caret movement while editing.
 
 ## [0.8.12] - 2026-08-13
 

@@ -80,6 +80,20 @@ key: a single character, `Delete`, `Backspace`, `Insert`, `Return`, `Tab`,
 matching row the typed query is printed, as with Enter. Custom accepts don't
 update frecency or query history.
 
+Append `=PROMPT` to ask first. The key then opens a confirm card showing
+`PROMPT` at the right edge of the highlighted row: Enter accepts with the
+binding's exit code, Esc or Left dismisses, and other keys are ignored while it
+is open.
+
+```sh
+choice=$(nmcli -g ssid dev wifi list | pikr --dmenu --kb-custom 'Right=Forget?')
+[ $? -eq 10 ] && nmcli connection delete "$choice"
+```
+
+`Left`, `Right`, `Home` and `End` bindings fire only when the query caret can't
+move that way (`Right` and `End` at the end of the query, `Left` and `Home` at
+its start), so they don't take over caret movement while editing.
+
 ## Keybindings (planned)
 
 Normal mode:

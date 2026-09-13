@@ -19,6 +19,9 @@ pub enum Key {
     F2,
     /// Bare Delete — must not trigger a `Shift+Delete` binding.
     Delete,
+    Right,
+    Left,
+    Down,
 }
 
 impl Key {
@@ -35,6 +38,9 @@ impl Key {
             Key::ShiftDelete => vec!["-M", "shift", "-k", "Delete", "-m", "shift"],
             Key::F2 => vec!["-k", "F2"],
             Key::Delete => vec!["-k", "Delete"],
+            Key::Right => vec!["-k", "Right"],
+            Key::Left => vec!["-k", "Left"],
+            Key::Down => vec!["-k", "Down"],
         }
     }
 }
