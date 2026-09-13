@@ -4,6 +4,7 @@ pub mod frecency;
 pub mod history;
 pub mod icons;
 pub mod keys;
+pub mod keyspec;
 pub mod matcher;
 pub mod state;
 

@@ -57,6 +57,29 @@ pikr --show run           # run command
 echo -e "a\nb\nc" | pikr --dmenu
 ```
 
+### Custom accept keys (dmenu)
+
+`--kb-custom KEY` adds an alternate key that accepts the highlighted row. The
+row is printed exactly as with Enter, but pikr exits with **10** for the first
+binding, **11** for the second, and so on (up to 19 bindings, like rofi's
+`-kb-custom-N`), so a script can tell which key was pressed:
+
+```sh
+choice=$(printf 'home\nwork\n' | pikr --dmenu --kb-custom Shift+Delete)
+case $? in
+  0)  connect "$choice" ;;
+  10) forget  "$choice" ;;
+esac
+```
+
+`KEY` is a chord of optional modifiers (`Ctrl`, `Shift`, `Alt`, `Super`) and a
+key: a single character, `Delete`, `Backspace`, `Insert`, `Return`, `Tab`,
+`Escape`, `Space`, `Left`/`Right`/`Up`/`Down`, `Home`, `End`, `PageUp`,
+`PageDown`, or `F1`–`F12`. Modifiers match exactly (`Delete` does not fire on
+`Shift+Delete`), and bindings take precedence over the built-in keymap. With no
+matching row the typed query is printed, as with Enter. Custom accepts don't
+update frecency or query history.
+
 ## Keybindings (planned)
 
 Normal mode:

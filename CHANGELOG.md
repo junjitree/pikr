@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `--kb-custom KEY` (dmenu): alternate accept keys. The highlighted row is
+  printed as with Enter, but pikr exits 10 for the first binding, 11 for the
+  second, up to 19 bindings — rofi's `-kb-custom-N` convention — so scripts can
+  offer a second action per row (forget, delete, copy). Keys are chords such as
+  `Shift+Delete`, `Ctrl+d` or `F2`, matched with exact modifiers and taking
+  precedence over the built-in keymap. Custom accepts skip frecency and history.
+
 ## [0.8.12] - 2026-08-13
 
 ### Security

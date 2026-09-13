@@ -626,6 +626,15 @@ fn status_bar(
 
 // ─── App-level reactive state ─────────────────────────────────────────────────
 
+/// Rows an accept acts on: the anchored range in Visual mode, otherwise just
+/// the cursor row.
+fn selection_range(mode: VimMode, anchor: Option<usize>, sel: usize) -> Vec<usize> {
+    match (mode, anchor) {
+        (VimMode::Visual, Some(a)) => (a.min(sel)..=a.max(sel)).collect(),
+        _ => vec![sel],
+    }
+}
+
 pub struct AppState {
     pub picker: PickerState,
     pub entries: Vec<Arc<Entry>>,
@@ -660,6 +669,9 @@ pub struct AppState {
     /// `.style(...)` sites use `ui::css::apply` against this sheet to pick
     /// up declarative rules; reactive sites still chain inline.
     pub stylesheet: Arc<crate::ui::css::Sheet>,
+    /// `--kb-custom` bindings, in flag order. Checked before the vim keymap;
+    /// binding N accepts the selection and exits `KB_CUSTOM_EXIT_BASE + N`.
+    pub kb_custom: Vec<crate::picker::keyspec::KeySpec>,
 }
 
 impl AppState {
@@ -1285,6 +1297,12 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
             let g_pending = s.g_pending;
             let action = if ex_open.is_some() {
                 None
+            } else if let Some(i) = s
+                .kb_custom
+                .iter()
+                .position(|k| k.matches(key, ke.modifiers))
+            {
+                Some(Action::AcceptKbCustom(i))
             } else {
                 key_to_action(&s.picker, key, ctrl, shift)
             };
@@ -1447,14 +1465,11 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
                 // Normal/Insert: just the cursor row.
                 let (payloads, cli_mode) = {
                     let mut s = state_key.lock().unwrap();
-                    let anchor = visual_anchor_sig.get_untracked();
-                    let range: Vec<usize> = match (vim_mode_sig.get_untracked(), anchor) {
-                        (VimMode::Visual, Some(a)) => {
-                            let (lo, hi) = (a.min(sel), a.max(sel));
-                            (lo..=hi).collect()
-                        }
-                        _ => vec![sel],
-                    };
+                    let range = selection_range(
+                        vim_mode_sig.get_untracked(),
+                        visual_anchor_sig.get_untracked(),
+                        sel,
+                    );
                     let payloads: Vec<modes::Payload> = range
                         .into_iter()
                         .filter_map(|mi| s.matches.get(mi))
@@ -1532,6 +1547,35 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
                     eprintln!("pikr: execute error: {e}");
                 }
                 std::process::exit(0);
+            }
+            Action::AcceptKbCustom(index) => {
+                // Hand the selection back for a script-defined action (forget,
+                // copy, delete, …). No frecency or history bump: an entry the
+                // script is about to remove shouldn't be promoted for next time.
+                let sel = selected_sig.get();
+                let mut payloads: Vec<modes::Payload> = {
+                    let s = state_key.lock().unwrap();
+                    selection_range(
+                        vim_mode_sig.get_untracked(),
+                        visual_anchor_sig.get_untracked(),
+                        sel,
+                    )
+                    .into_iter()
+                    .filter_map(|mi| s.matches.get(mi))
+                    .map(|m| s.entries[m.index].payload.clone())
+                    .collect()
+                };
+                // No match: return the typed query, as Enter does in dmenu.
+                if payloads.is_empty() {
+                    let query_text = query_sig.get_untracked();
+                    payloads.push(modes::Payload::Stdout(query_text.trim().to_string()));
+                }
+                for payload in &payloads {
+                    if let Err(e) = modes::execute(payload) {
+                        eprintln!("pikr: execute error: {e}");
+                    }
+                }
+                std::process::exit(crate::cli::KB_CUSTOM_EXIT_BASE + index as i32);
             }
             Action::Cancel => std::process::exit(1),
             Action::InsertChar(c) => {
