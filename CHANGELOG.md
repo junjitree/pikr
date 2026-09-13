@@ -8,6 +8,13 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- `-P` / `--password`: the empty-state hint no longer echoes the query. With no
+  matching rows it printed `No results for "<query>"`, showing the masked secret
+  in plain text directly beneath the masked input. It now reads `No results`,
+  without the text or its length.
+
 ## [0.8.12] - 2026-08-13
 
 ### Security
