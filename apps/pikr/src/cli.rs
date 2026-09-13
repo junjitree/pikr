@@ -86,6 +86,13 @@ pub struct Cli {
         action = ArgAction::Append
     )]
     pub kb_custom: Vec<KbCustom>,
+
+    /// dmenu mode: open the window immediately and show TEXT where the list
+    /// goes while stdin is still being written, e.g. `--loading Scanning…`.
+    /// Rows appear once stdin closes; accepting is disabled until then.
+    /// Without it pikr reads all of stdin before opening.
+    #[arg(long = "loading", value_name = "TEXT", requires = "dmenu")]
+    pub loading: Option<String>,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,6 +246,18 @@ mod tests {
     fn kb_custom_with_confirm_prompt() {
         let cli = parse(&["-d", "--kb-custom", "Right=Forget?"]);
         assert_eq!(cli.kb_custom[0].confirm.as_deref(), Some("Forget?"));
+    }
+
+    #[test]
+    fn loading_text() {
+        let cli = parse(&["-d", "--loading", "Scanning…"]);
+        assert_eq!(cli.loading.as_deref(), Some("Scanning…"));
+    }
+
+    #[test]
+    fn loading_requires_dmenu() {
+        let err = Cli::try_parse_from(["pikr", "--loading", "x"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 
     #[test]

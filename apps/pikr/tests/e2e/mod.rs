@@ -615,3 +615,28 @@ fn kb_custom_confirm_blocks_navigation() {
         "Down must not move the selection under the card"
     );
 }
+
+// ── --loading ───────────────────────────────────────────────────────────────
+
+/// With `--loading`, rows read on the background thread still land and
+/// accept normally.
+#[test]
+fn loading_rows_arrive_and_accept() {
+    if !require_tools() {
+        return;
+    }
+    let sway = Sway::headless();
+    let pikr = Pikr::spawn(
+        &sway,
+        &["--dmenu", "--loading", "Loading…", "--filter", "ban"],
+        Some("apple\nbanana\ncherry\n"),
+    )
+    .unwrap();
+    let out = pikr
+        .wait_with_retry(Duration::from_secs(15), Duration::from_millis(1000), || {
+            let _ = Wtype::new(&sway).keys(&[Key::F12, Key::Return]).send();
+        })
+        .unwrap();
+    assert_eq!(out.exit_code, Some(0), "stderr:\n{}", out.stderr);
+    assert_eq!(out.stdout.trim(), "banana");
+}

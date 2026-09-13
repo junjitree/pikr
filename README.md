@@ -90,6 +90,17 @@ choice=$(nmcli -g ssid dev wifi list | pikr --dmenu --kb-custom 'Right=Forget?')
 [ $? -eq 10 ] && nmcli connection delete "$choice"
 ```
 
+### Loading state (dmenu)
+
+By default pikr reads all of stdin before opening. For a slow producer,
+`--loading TEXT` opens the window immediately and shows `TEXT` centred where the
+list will appear; the rows fill in once stdin closes. Typing works meanwhile,
+but accepting is disabled until the rows arrive.
+
+```sh
+slow_scan | pikr --dmenu --loading 'Scanning…'
+```
+
 `Left`, `Right`, `Home` and `End` bindings fire only when the query caret can't
 move that way (`Right` and `End` at the end of the query, `Left` and `Home` at
 its start), so they don't take over caret movement while editing.

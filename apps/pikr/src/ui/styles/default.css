@@ -103,6 +103,13 @@
   font-size: {font_size}px;
 }
 
+/* `--loading` text, centred where the list will appear. */
+.loading-text {
+  color: {muted};
+  font-family: {font_family};
+  font-size: {font_size}px;
+}
+
 /* Result-list row container. Border and bg are reactive and stay inline. */
 .row {
   width: 100%;

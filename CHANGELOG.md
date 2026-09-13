@@ -19,6 +19,9 @@ and this project adheres to
 - `--kb-custom KEY=PROMPT`: show `PROMPT` in a confirm card on the highlighted
   row before accepting. Enter accepts with the binding's exit code; Esc or Left
   dismisses.
+- `--loading TEXT` (dmenu): open immediately and show `TEXT` centred in the list
+  area while stdin is still being written; rows appear when it closes, and
+  accepting is disabled until then.
 - `Left`/`Right`/`Home`/`End` bindings fire only when the query caret can't move
   that way, so binding them doesn't break caret movement while editing.
 

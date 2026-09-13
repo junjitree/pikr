@@ -712,6 +712,11 @@ pub struct AppState {
     /// `--kb-custom` bindings, in flag order. Checked before the vim keymap;
     /// binding N accepts the selection and exits `KB_CUSTOM_EXIT_BASE + N`.
     pub kb_custom: Vec<crate::picker::keyspec::KbCustom>,
+    /// `--loading` text, shown in place of the list until stdin closes.
+    pub loading: Option<String>,
+    /// Entries still being read from stdin (`--loading`). Taken once by
+    /// `picker_view`, which swaps them in when they arrive.
+    pub pending_entries: Option<std::sync::mpsc::Receiver<Arc<Vec<Entry>>>>,
 }
 
 impl AppState {
@@ -957,6 +962,35 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
 
     let rev: RwSignal<u64> = RwSignal::new(0);
     let confirm_sig: RwSignal<Option<ConfirmCard>> = RwSignal::new(None);
+
+    // --loading: rows still arriving on stdin. `loading_sig` holds the text
+    // shown in place of the list until they land.
+    let (loading_text, pending) = {
+        let mut s = state.lock().unwrap();
+        (s.loading.clone(), s.pending_entries.take())
+    };
+    let loading_sig: RwSignal<Option<String>> = RwSignal::new(pending.as_ref().and(loading_text));
+    if let Some(rx) = pending {
+        let arrived = ChannelSignal::new(rx);
+        let state_loaded = Arc::clone(&state);
+        Effect::new(move |_| {
+            let Some(entries) = arrived.get() else {
+                return;
+            };
+            // Batched like the rerank effect: the subscribers `rerank` wakes
+            // re-lock AppState, so the guard must drop before they run.
+            Effect::batch(|| {
+                {
+                    let mut s = state_loaded.lock().unwrap();
+                    s.entries = entries.iter().cloned().map(Arc::new).collect();
+                    s.usage_keys = crate::picker::frecency::entry_keys(&s.entries);
+                    s.rerank();
+                }
+                loading_sig.set(None);
+                rev.update(|r| *r += 1);
+            });
+        });
+    }
 
     // History-recall state: `history_cursor` is the index into the per-mode
     // history list (None = not recalling, just typing live). `history_draft`
@@ -1251,6 +1285,32 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
                 })
         });
 
+    // While --loading rows are pending, the list area shows the loading text,
+    // centred, in exactly the space the list will take.
+    let scrollable = scrollable.style(move |s| {
+        s.apply_if(loading_sig.get().is_some(), |s| {
+            s.display(floem::style::Display::None)
+        })
+    });
+    let sheet_loading = Arc::clone(&sheet);
+    let loading_view =
+        Stack::horizontal((
+            Label::derived(move || loading_sig.get().unwrap_or_default()).style(move |s| {
+                crate::ui::css::apply(s, &sheet_loading, "label", &["loading-text"])
+            }),
+        ))
+        .style(move |s| {
+            s.width_full()
+                .flex_grow(1.0_f32)
+                .flex_basis(0.0)
+                .min_height(0.0)
+                .items_center()
+                .justify_center()
+                .apply_if(loading_sig.get().is_none(), |s| {
+                    s.display(floem::style::Display::None)
+                })
+        });
+
     let ex = ex_bar(ex_buf_sig, blink_on, fg, Arc::clone(&sheet));
     let status = status_bar(
         vim_mode_sig,
@@ -1275,9 +1335,14 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
     Container::with_id(
         root_id,
         Container::new(
-            Stack::vertical((input_row, scrollable, ex.into_any(), status.into_any())).style(
-                move |s| crate::ui::css::apply(s, &sheet_stack, "container", &["panel-stack"]),
-            ),
+            Stack::vertical((
+                input_row,
+                scrollable,
+                loading_view,
+                ex.into_any(),
+                status.into_any(),
+            ))
+            .style(move |s| crate::ui::css::apply(s, &sheet_stack, "container", &["panel-stack"])),
         )
         .style(move |s| crate::ui::css::apply(s, &sheet_panel, "container", &["panel"])),
     )
@@ -1463,6 +1528,20 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
         let Some(action) = action_opt else {
             return EventPropagation::Continue;
         };
+
+        // Rows haven't arrived yet (--loading): nothing to accept. Without this
+        // dmenu's no-match fallthrough would print the typed query.
+        if loading_sig.get_untracked().is_some()
+            && matches!(
+                action,
+                Action::Accept
+                    | Action::AcceptCustom
+                    | Action::AcceptKbCustom(_)
+                    | Action::ConfirmKbCustom(_)
+            )
+        {
+            return EventPropagation::Stop;
+        }
 
         match action {
             Action::MoveDown(n) => {
