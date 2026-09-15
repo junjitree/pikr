@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.8.13] - 2026-09-15
+
 ### Added
 
 - `--kb-custom KEY` (with `--dmenu` or `--show dmenu`): alternate accept keys.
@@ -52,10 +54,10 @@ and this project adheres to
 
 ### Fixed
 
-- Windows: the config file, query history and frecency now persist. pikr read
-  no config file and kept history and usage in memory only, so every launch
-  started from defaults and forgot which entries were used most. They now live
-  at `%APPDATA%\pikr\config.toml` and `%LOCALAPPDATA%\pikr\{history,usage}.toml`
+- Windows: the config file, query history and frecency now persist. pikr read no
+  config file and kept history and usage in memory only, so every launch started
+  from defaults and forgot which entries were used most. They now live at
+  `%APPDATA%\pikr\config.toml` and `%LOCALAPPDATA%\pikr\{history,usage}.toml`
   (unchanged XDG paths elsewhere).
 - Windows drun icons: cached PNGs under `%LOCALAPPDATA%\pikr\icon-cache` are now
   written to a temp file and renamed into place. The parallel Start Menu walk
@@ -1093,7 +1095,8 @@ and this project adheres to
 - Verbose frame-callback / redraw-tick `log::debug!` traces in the winit fork —
   they were diagnostic for the Epic 4 hang, no longer load-bearing.
 
-[Unreleased]: https://github.com/kryptic-sh/pikr/compare/v0.8.12...main
+[Unreleased]: https://github.com/kryptic-sh/pikr/compare/v0.8.13...main
+[0.8.13]: https://github.com/kryptic-sh/pikr/compare/v0.8.12...v0.8.13
 [0.8.12]: https://github.com/kryptic-sh/pikr/compare/v0.8.11...v0.8.12
 [0.8.11]: https://github.com/kryptic-sh/pikr/compare/v0.8.10...v0.8.11
 [0.8.10]: https://github.com/kryptic-sh/pikr/compare/v0.8.9...v0.8.10
