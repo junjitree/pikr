@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows drun icons: cached PNGs under `%LOCALAPPDATA%\pikr\icon-cache` are now
+  written to a temp file and renamed into place. The parallel Start Menu walk
+  could interleave two writes to the same file (a shared target, or the generic
+  `__fallback__.png`) and leave a truncated icon cached until the cache was
+  wiped. The icon bitmap buffer size is also overflow-checked before `GetDIBits`
+  fills it.
+
 ### Security
 
 - `-P` / `--password`: the empty-state hint no longer echoes the query. With no

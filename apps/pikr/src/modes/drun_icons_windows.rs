@@ -30,7 +30,7 @@ pub fn icon_for(target: &Path) -> Option<PathBuf> {
         return Some(cache_path);
     }
     if let Some(bytes) = extract_icon_png(target) {
-        std::fs::write(&cache_path, &bytes).ok()?;
+        write_atomically(&cache_path, &bytes).ok()?;
         return Some(cache_path);
     }
     // Extraction failed (no icon resource, odd path, permission).  Fall
@@ -66,8 +66,36 @@ fn fallback_icon_path() -> Option<PathBuf> {
         return Some(fallback);
     }
     let bytes = extract_generic_app_icon_png()?;
-    std::fs::write(&fallback, &bytes).ok()?;
+    write_atomically(&fallback, &bytes).ok()?;
     Some(fallback)
+}
+
+/// Write `bytes` to a uniquely named sibling temp file, then rename it over
+/// `path`.
+///
+/// Icons are extracted from a rayon `par_iter`, and several entries share one
+/// target (and every miss shares `__fallback__.png`). A plain `fs::write`
+/// truncates in place, so a concurrent writer — or a reader that saw
+/// `exists()` — could observe a half-written PNG. Renaming a complete file
+/// means readers only ever see the old file or the new one.
+fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(format!(
+        ".{}.{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let tmp = PathBuf::from(tmp);
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path).or_else(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        // Losing the race to another writer that produced the same file is
+        // fine; Windows refuses to replace a file another handle has open.
+        if path.exists() { Ok(()) } else { Err(e) }
+    })
 }
 
 /// Ask the shell for the generic `.exe` icon via `SHGFI_USEFILEATTRIBUTES`.
@@ -171,25 +199,33 @@ fn hicon_to_png(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) -> Option
         return None;
     }
 
-    let width = bm.bmWidth as u32;
-    let height = bm.bmHeight as u32;
-    if width == 0 || height == 0 {
+    // `GetDIBits` writes `width * height * 4` bytes into `pixels`, so the
+    // buffer size must be computed without wrapping — a wrapped product
+    // would under-allocate and let GDI write past the end.
+    let (Ok(width), Ok(height)) = (u32::try_from(bm.bmWidth), u32::try_from(bm.bmHeight)) else {
         cleanup();
         return None;
-    }
+    };
+    let Some(len) = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(4))
+        .filter(|&n| n > 0)
+    else {
+        cleanup();
+        return None;
+    };
 
     // --- Step 3: GetDIBits — fills pixels as 32 bpp BGRA, top-down ---
     //
     // Negative biHeight forces top-down scan order (row 0 = top of image),
     // which matches `image::RgbaImage::from_raw` expectations.
-    let stride = width * 4;
-    let mut pixels: Vec<u8> = vec![0u8; (stride * height) as usize];
+    let mut pixels: Vec<u8> = vec![0u8; len];
 
     let mut bmi = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: width as i32,
-            biHeight: -(height as i32), // negative → top-down
+            biWidth: bm.bmWidth,
+            biHeight: -bm.bmHeight, // negative → top-down
             biPlanes: 1,
             biBitCount: 32,
             biCompression: BI_RGB.0,
@@ -227,8 +263,8 @@ fn hicon_to_png(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) -> Option
     // --- Step 4: BGRA → RGBA ---
     // `GetDIBits` returns pixels in BGRA order (Windows GDI convention);
     // `image::RgbaImage` expects RGBA.  Swap B ↔ R channels in-place.
-    for chunk in pixels.chunks_exact_mut(4) {
-        chunk.swap(0, 2); // B ↔ R
+    for px in pixels.as_chunks_mut::<4>().0 {
+        px.swap(0, 2); // B ↔ R
     }
 
     // --- Step 5: Encode as PNG ---
@@ -308,6 +344,39 @@ mod tests {
             p1, p2,
             "cache path must be deterministic for the same input"
         );
+    }
+
+    /// Concurrent writers of one cache file (same target in the rayon walk)
+    /// must never expose a partial file to a reader.
+    #[test]
+    fn write_atomically_never_exposes_partial_file() {
+        const LEN: usize = 256 * 1024;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("icon.png");
+        write_atomically(&path, &vec![0u8; LEN]).unwrap();
+
+        std::thread::scope(|s| {
+            for w in 0..4u8 {
+                let path = &path;
+                s.spawn(move || {
+                    for _ in 0..25 {
+                        write_atomically(path, &vec![w; LEN]).unwrap();
+                    }
+                });
+            }
+            for _ in 0..4 {
+                let path = &path;
+                s.spawn(move || {
+                    for _ in 0..100 {
+                        // A read can lose to a rename in progress on Windows;
+                        // only a successful read is checked for completeness.
+                        if let Ok(bytes) = std::fs::read(path) {
+                            assert_eq!(bytes.len(), LEN, "reader saw a partial file");
+                        }
+                    }
+                });
+            }
+        });
     }
 
     /// Different targets must produce different cache paths.

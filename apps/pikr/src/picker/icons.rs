@@ -306,6 +306,16 @@ impl Default for IconCache {
 mod tests {
     use super::*;
 
+    /// An absolute path on the host OS, so passthrough tests take the
+    /// absolute-path branch everywhere — a literal `/tmp/x` has no drive
+    /// prefix and is not absolute on Windows.
+    fn abs(name: &str) -> String {
+        std::env::temp_dir()
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
+    }
+
     fn pin_mtime(path: &Path, t: std::time::SystemTime) {
         std::fs::File::options()
             .write(true)
@@ -318,8 +328,8 @@ mod tests {
     #[test]
     fn absolute_path_passthrough() {
         let mut cache = IconCache::new();
-        let path = "/usr/share/icons/hicolor/32x32/apps/firefox.png";
-        let result = cache.resolve(path);
+        let path = abs("firefox.png");
+        let result = cache.resolve(&path);
         assert_eq!(result, Some(PathBuf::from(path)));
     }
 
@@ -411,8 +421,9 @@ mod tests {
         // Fallback path is absolute so the test is deterministic regardless
         // of the system icon theme.
         let mut cache = IconCache::new();
-        let result = cache.resolve_or_fallback(None, &["/tmp/fallback.png"]);
-        assert_eq!(result, Some(PathBuf::from("/tmp/fallback.png")));
+        let fallback = abs("fallback.png");
+        let result = cache.resolve_or_fallback(None, &[&fallback]);
+        assert_eq!(result, Some(PathBuf::from(fallback)));
     }
 
     #[test]
@@ -420,9 +431,9 @@ mod tests {
         // Primary is a bare name that almost certainly isn't installed
         // (random suffix); fallback is an absolute path passthrough.
         let mut cache = IconCache::new();
-        let result =
-            cache.resolve_or_fallback(Some("zzz-no-such-icon-xyz"), &["/tmp/fallback.png"]);
-        assert_eq!(result, Some(PathBuf::from("/tmp/fallback.png")));
+        let fallback = abs("fallback.png");
+        let result = cache.resolve_or_fallback(Some("zzz-no-such-icon-xyz"), &[&fallback]);
+        assert_eq!(result, Some(PathBuf::from(fallback)));
     }
 
     #[test]
@@ -430,9 +441,9 @@ mod tests {
         // First entry is a bare name that won't resolve; second is an
         // absolute path that always does.
         let mut cache = IconCache::new();
-        let result =
-            cache.resolve_or_fallback(None, &["zzz-no-such-icon-xyz", "/tmp/late-fallback.png"]);
-        assert_eq!(result, Some(PathBuf::from("/tmp/late-fallback.png")));
+        let late = abs("late-fallback.png");
+        let result = cache.resolve_or_fallback(None, &["zzz-no-such-icon-xyz", &late]);
+        assert_eq!(result, Some(PathBuf::from(late)));
     }
 
     #[test]
@@ -445,8 +456,9 @@ mod tests {
     #[test]
     fn primary_wins_when_resolvable() {
         let mut cache = IconCache::new();
-        let result = cache.resolve_or_fallback(Some("/tmp/primary.png"), &["/tmp/fallback.png"]);
-        assert_eq!(result, Some(PathBuf::from("/tmp/primary.png")));
+        let primary = abs("primary.png");
+        let result = cache.resolve_or_fallback(Some(&primary), &[&abs("fallback.png")]);
+        assert_eq!(result, Some(PathBuf::from(primary)));
     }
 
     #[test]
