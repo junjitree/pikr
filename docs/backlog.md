@@ -65,6 +65,51 @@
   the documented freshness mechanism behind the mtime+len invalidation; not
   material on its own — revisit only if profiling shows it.
 
+## Windows support pass 2026-09-15
+
+First session run on a Windows 11 host; the `#[cfg(windows)]` arms were
+compiled, tested and exercised here, and CI now runs the test suite on
+ubuntu, macOS and Windows.
+
+### Open
+
+- **`-P` still leaks through filtering.** Masking the calc live row and
+  dropping match highlights (`AppState::hide_match_positions_if_password`)
+  closed the direct echoes, but which dmenu / calc-history rows stay visible
+  still reveals which rows match the secret, and calc's dedupe hides a history
+  row exactly equal to the live expression. Inherent to filtering on a secret;
+  the options are to document it or to stop filtering under `-P` (show all rows
+  unranked). Needs a product call.
+- **Windows startup is at the edge of the 500 ms usable-picker target.** Release
+  build, warm drun cache: entries collected in ~4 ms but first paint at
+  ~540–925 ms across runs — the wgpu/Vulkan init dominates, not pikr's own
+  work. Not profiled further.
+- **Windows window posture from issue #9 is not done:** no always-on-top, no
+  `WS_EX_TOOLWINDOW` (pikr shows in Alt-Tab and the taskbar), decorations left
+  to the default `WindowConfig`. Observed: the window does take foreground when
+  launched from a terminal.
+- **README "Requirements" / "Architecture" still say Wayland-only.** Windows and
+  macOS open a regular top-level window (`app::run` non-linux arm); the README
+  should say so and document that a global hotkey is user-wired (PowerToys,
+  AutoHotkey).
+
+### Coverage gaps (not verified)
+
+- drun accept on Windows was not driven through the GUI keystroke path; only
+  `drun_windows::launch` was called directly (Notepad from its WindowsApps
+  package and `cmd.exe` from its known-folder id both started). dmenu, emoji
+  and calc accepts WERE driven end-to-end with synthesized keys.
+- History/frecency persistence on Windows is covered by the path tests
+  (`state_file_path_resolves_under_a_pikr_dir`,
+  `default_path_resolves_under_a_pikr_dir`); a real accept writing
+  `%LOCALAPPDATA%\pikr\history.toml` was not observed (the session lost its
+  foreground window before that probe ran).
+- `--kb-custom KEY=PROMPT` with no matching row now shows the confirm card in
+  the empty-state row; its on-screen placement was not looked at. The e2e test
+  `kb_custom_confirm_with_no_match_prints_query` covers the behaviour (CI,
+  Linux).
+- run, ssh and clipboard modes were not exercised on Windows beyond unit tests.
+
 ## review review 2026-08-06
 
 Whole-codebase correctness pass (clean tree). Findings verified by the
