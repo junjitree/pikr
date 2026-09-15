@@ -8,6 +8,23 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `--kb-custom KEY` (dmenu): alternate accept keys. The highlighted row is
+  printed as with Enter, but pikr exits 10 for the first binding, 11 for the
+  second, up to 19 bindings — rofi's `-kb-custom-N` convention — so scripts can
+  offer a second action per row (forget, delete, copy). Keys are chords such as
+  `Shift+Delete`, `Ctrl+d` or `F2`, matched with exact modifiers and taking
+  precedence over the built-in keymap. Custom accepts skip frecency and history.
+- `--kb-custom KEY=PROMPT`: show `PROMPT` in a confirm card on the highlighted
+  row before accepting. Enter accepts with the binding's exit code; Esc or Left
+  dismisses.
+- `--loading TEXT` (dmenu): open immediately and show `TEXT` centred in the list
+  area while stdin is still being written; rows appear when it closes, and
+  accepting is disabled until then.
+- `Left`/`Right`/`Home`/`End` bindings fire only when the query caret can't move
+  that way, so binding them doesn't break caret movement while editing.
+
 ### Fixed
 
 - Windows drun icons: cached PNGs under `%LOCALAPPDATA%\pikr\icon-cache` are now

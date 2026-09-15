@@ -189,6 +189,7 @@ fn entry_row(
     mi: usize,
     selected_sig: RwSignal<usize>,
     visual_anchor_sig: RwSignal<Option<usize>>,
+    confirm_sig: RwSignal<Option<ConfirmCard>>,
     state: Arc<Mutex<AppState>>,
     fg: Color,
     accent: Color,
@@ -302,8 +303,25 @@ fn entry_row(
     // stays distinct from the cursor row (which keeps the deeper selected_bg
     // and the accent border).
     let visual_bg = blend(accent, selected_bg, 0.35);
+    // Confirm card for `--kb-custom KEY=PROMPT`, pinned to the right edge of
+    // the highlighted row while a confirmation is pending.
+    let sheet_card = Arc::clone(&sheet);
+    let card = Label::derived(move || {
+        confirm_sig
+            .get()
+            .map(|c| format!("{}  \u{21B5}", c.prompt))
+            .unwrap_or_default()
+    })
+    .style(move |s| {
+        let shown = selected_sig.get() == mi && confirm_sig.get().is_some();
+        crate::ui::css::apply(s, &sheet_card, "label", &["confirm-card"])
+            .flex_shrink(0.0_f32)
+            .apply_if(!shown, |s| s.display(floem::style::Display::None))
+    });
+    let spacer = Container::new(Empty::new()).style(|s| s.flex_grow(1.0_f32));
+
     let sheet_row = Arc::clone(&sheet);
-    Stack::horizontal((icon_view, label_view.into_any(), desc_view))
+    Stack::horizontal((icon_view, label_view.into_any(), desc_view, spacer, card))
         .style(move |s| {
             let cursor_row = selected_sig.get() == mi;
             let in_visual_range = match visual_anchor_sig.get() {
@@ -341,6 +359,12 @@ fn entry_row(
                 .apply_if(!highlighted, |s| s.hover(|s| s.background(hover_bg)))
         })
         .on_event_stop(Click, move |_cx: &mut EventCx, _ev: &()| {
+            // A click while a confirm card is open dismisses it rather than
+            // accepting whichever row was clicked.
+            if confirm_sig.get_untracked().is_some() {
+                confirm_sig.set(None);
+                return;
+            }
             selected_sig.set(mi);
             // Mirror the keyboard Accept path: bump frecency + push history.
             {
@@ -639,6 +663,31 @@ fn status_bar(
 
 // ─── App-level reactive state ─────────────────────────────────────────────────
 
+/// A pending `--kb-custom KEY=PROMPT` confirmation, shown as a card on the
+/// highlighted row until Enter (accept) or Esc / Left (dismiss).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmCard {
+    pub binding: usize,
+    pub prompt: String,
+}
+
+/// Left/Right/Home/End bindings would otherwise steal query-caret movement.
+/// Let them fire only when the caret can't move in that direction: Right and
+/// End at the end of the query, Left and Home at its start.
+fn caret_would_move(key: &crate::picker::keyspec::KeySpec, cursor: usize, len: usize) -> bool {
+    ((key.is_named(NamedKey::ArrowRight) || key.is_named(NamedKey::End)) && cursor < len)
+        || ((key.is_named(NamedKey::ArrowLeft) || key.is_named(NamedKey::Home)) && cursor > 0)
+}
+
+/// Rows an accept acts on: the anchored range in Visual mode, otherwise just
+/// the cursor row.
+fn selection_range(mode: VimMode, anchor: Option<usize>, sel: usize) -> Vec<usize> {
+    match (mode, anchor) {
+        (VimMode::Visual, Some(a)) => (a.min(sel)..=a.max(sel)).collect(),
+        _ => vec![sel],
+    }
+}
+
 pub struct AppState {
     pub picker: PickerState,
     pub entries: Vec<Arc<Entry>>,
@@ -673,6 +722,14 @@ pub struct AppState {
     /// `.style(...)` sites use `ui::css::apply` against this sheet to pick
     /// up declarative rules; reactive sites still chain inline.
     pub stylesheet: Arc<crate::ui::css::Sheet>,
+    /// `--kb-custom` bindings, in flag order. Checked before the vim keymap;
+    /// binding N accepts the selection and exits `KB_CUSTOM_EXIT_BASE + N`.
+    pub kb_custom: Vec<crate::picker::keyspec::KbCustom>,
+    /// `--loading` text, shown in place of the list until stdin closes.
+    pub loading: Option<String>,
+    /// Entries still being read from stdin (`--loading`). Taken once by
+    /// `picker_view`, which swaps them in when they arrive.
+    pub pending_entries: Option<std::sync::mpsc::Receiver<Arc<Vec<Entry>>>>,
 }
 
 impl AppState {
@@ -917,6 +974,36 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
         std::sync::Arc::new(FamilyOwned::parse_list(&font_family).collect());
 
     let rev: RwSignal<u64> = RwSignal::new(0);
+    let confirm_sig: RwSignal<Option<ConfirmCard>> = RwSignal::new(None);
+
+    // --loading: rows still arriving on stdin. `loading_sig` holds the text
+    // shown in place of the list until they land.
+    let (loading_text, pending) = {
+        let mut s = state.lock().unwrap();
+        (s.loading.clone(), s.pending_entries.take())
+    };
+    let loading_sig: RwSignal<Option<String>> = RwSignal::new(pending.as_ref().and(loading_text));
+    if let Some(rx) = pending {
+        let arrived = ChannelSignal::new(rx);
+        let state_loaded = Arc::clone(&state);
+        Effect::new(move |_| {
+            let Some(entries) = arrived.get() else {
+                return;
+            };
+            // Batched like the rerank effect: the subscribers `rerank` wakes
+            // re-lock AppState, so the guard must drop before they run.
+            Effect::batch(|| {
+                {
+                    let mut s = state_loaded.lock().unwrap();
+                    s.entries = entries.iter().cloned().map(Arc::new).collect();
+                    s.usage_keys = crate::picker::frecency::entry_keys(&s.entries);
+                    s.rerank();
+                }
+                loading_sig.set(None);
+                rev.update(|r| *r += 1);
+            });
+        });
+    }
 
     // History-recall state: `history_cursor` is the index into the per-mode
     // history list (None = not recalling, just typing live). `history_draft`
@@ -1133,6 +1220,7 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
                 mi,
                 selected_sig,
                 visual_anchor_sig,
+                confirm_sig,
                 Arc::clone(&state_row),
                 fg,
                 accent,
@@ -1206,6 +1294,32 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
                 })
         });
 
+    // While --loading rows are pending, the list area shows the loading text,
+    // centred, in exactly the space the list will take.
+    let scrollable = scrollable.style(move |s| {
+        s.apply_if(loading_sig.get().is_some(), |s| {
+            s.display(floem::style::Display::None)
+        })
+    });
+    let sheet_loading = Arc::clone(&sheet);
+    let loading_view =
+        Stack::horizontal((
+            Label::derived(move || loading_sig.get().unwrap_or_default()).style(move |s| {
+                crate::ui::css::apply(s, &sheet_loading, "label", &["loading-text"])
+            }),
+        ))
+        .style(move |s| {
+            s.width_full()
+                .flex_grow(1.0_f32)
+                .flex_basis(0.0)
+                .min_height(0.0)
+                .items_center()
+                .justify_center()
+                .apply_if(loading_sig.get().is_none(), |s| {
+                    s.display(floem::style::Display::None)
+                })
+        });
+
     let ex = ex_bar(ex_buf_sig, blink_on, fg, Arc::clone(&sheet));
     let status = status_bar(
         vim_mode_sig,
@@ -1230,9 +1344,14 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
     Container::with_id(
         root_id,
         Container::new(
-            Stack::vertical((input_row, scrollable, ex.into_any(), status.into_any())).style(
-                move |s| crate::ui::css::apply(s, &sheet_stack, "container", &["panel-stack"]),
-            ),
+            Stack::vertical((
+                input_row,
+                scrollable,
+                loading_view,
+                ex.into_any(),
+                status.into_any(),
+            ))
+            .style(move |s| crate::ui::css::apply(s, &sheet_stack, "container", &["panel-stack"])),
         )
         .style(move |s| crate::ui::css::apply(s, &sheet_panel, "container", &["panel"])),
     )
@@ -1286,14 +1405,45 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
         let shift = ke.modifiers.shift();
         let key = &ke.key;
 
+        // A confirm card owns the keyboard: Enter accepts its binding, Esc or
+        // Left dismisses, everything else is swallowed so the selection and
+        // query can't change under the card.
+        let pending = confirm_sig.get_untracked();
+        if pending.is_some() {
+            match key {
+                Key::Named(NamedKey::Enter) => {}
+                Key::Named(NamedKey::Escape) | Key::Named(NamedKey::ArrowLeft) => {
+                    confirm_sig.set(None);
+                    return EventPropagation::Stop;
+                }
+                _ => return EventPropagation::Stop,
+            }
+        }
+
         let (vim_mode, ex_open, total, g_was_pending, action_opt) = {
             let s = state_key.lock().unwrap();
             let vim_mode = vim_mode_sig.get();
             let ex_open = ex_buf_sig.get();
             let total = s.matches.len();
             let g_pending = s.g_pending;
-            let action = if ex_open.is_some() {
+            let caret = (
+                query_cursor_sig.get_untracked(),
+                query_sig.get_untracked().chars().count(),
+            );
+            let edits_query = matches!(vim_mode, VimMode::Insert | VimMode::Normal);
+            let action = if let Some(card) = &pending {
+                Some(Action::AcceptKbCustom(card.binding))
+            } else if ex_open.is_some() {
                 None
+            } else if let Some(i) = s.kb_custom.iter().position(|b| {
+                b.key.matches(key, ke.modifiers)
+                    && !(edits_query && caret_would_move(&b.key, caret.0, caret.1))
+            }) {
+                Some(if s.kb_custom[i].confirm.is_some() {
+                    Action::ConfirmKbCustom(i)
+                } else {
+                    Action::AcceptKbCustom(i)
+                })
             } else {
                 key_to_action(&s.picker, key, ctrl, shift)
             };
@@ -1388,6 +1538,20 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
             return EventPropagation::Continue;
         };
 
+        // Rows haven't arrived yet (--loading): nothing to accept. Without this
+        // dmenu's no-match fallthrough would print the typed query.
+        if loading_sig.get_untracked().is_some()
+            && matches!(
+                action,
+                Action::Accept
+                    | Action::AcceptCustom
+                    | Action::AcceptKbCustom(_)
+                    | Action::ConfirmKbCustom(_)
+            )
+        {
+            return EventPropagation::Stop;
+        }
+
         match action {
             Action::MoveDown(n) => {
                 let cur = selected_sig.get();
@@ -1456,14 +1620,11 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
                 // Normal/Insert: just the cursor row.
                 let (payloads, cli_mode) = {
                     let mut s = state_key.lock().unwrap();
-                    let anchor = visual_anchor_sig.get_untracked();
-                    let range: Vec<usize> = match (vim_mode_sig.get_untracked(), anchor) {
-                        (VimMode::Visual, Some(a)) => {
-                            let (lo, hi) = (a.min(sel), a.max(sel));
-                            (lo..=hi).collect()
-                        }
-                        _ => vec![sel],
-                    };
+                    let range = selection_range(
+                        vim_mode_sig.get_untracked(),
+                        visual_anchor_sig.get_untracked(),
+                        sel,
+                    );
                     let payloads: Vec<modes::Payload> = range
                         .into_iter()
                         .filter_map(|mi| s.matches.get(mi))
@@ -1541,6 +1702,47 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
                     eprintln!("pikr: execute error: {e}");
                 }
                 std::process::exit(0);
+            }
+            Action::ConfirmKbCustom(index) => {
+                // Nothing highlighted, nothing to confirm.
+                if total > 0 {
+                    let prompt = state_key.lock().unwrap().kb_custom[index].confirm.clone();
+                    if let Some(prompt) = prompt {
+                        confirm_sig.set(Some(ConfirmCard {
+                            binding: index,
+                            prompt,
+                        }));
+                    }
+                }
+            }
+            Action::AcceptKbCustom(index) => {
+                // Hand the selection back for a script-defined action (forget,
+                // copy, delete, …). No frecency or history bump: an entry the
+                // script is about to remove shouldn't be promoted for next time.
+                let sel = selected_sig.get();
+                let mut payloads: Vec<modes::Payload> = {
+                    let s = state_key.lock().unwrap();
+                    selection_range(
+                        vim_mode_sig.get_untracked(),
+                        visual_anchor_sig.get_untracked(),
+                        sel,
+                    )
+                    .into_iter()
+                    .filter_map(|mi| s.matches.get(mi))
+                    .map(|m| s.entries[m.index].payload.clone())
+                    .collect()
+                };
+                // No match: return the typed query, as Enter does in dmenu.
+                if payloads.is_empty() {
+                    let query_text = query_sig.get_untracked();
+                    payloads.push(modes::Payload::Stdout(query_text.trim().to_string()));
+                }
+                for payload in &payloads {
+                    if let Err(e) = modes::execute(payload) {
+                        eprintln!("pikr: execute error: {e}");
+                    }
+                }
+                std::process::exit(crate::cli::KB_CUSTOM_EXIT_BASE + index as i32);
             }
             Action::Cancel => std::process::exit(1),
             Action::InsertChar(c) => {
@@ -1684,8 +1886,8 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
 #[cfg(test)]
 mod tests {
     use super::{
-        char_idx_to_byte, empty_state_text, mask_password, move_down_selection, parse_color,
-        rerank_if_query_changed, row_key, with_cursor, word_boundary_back,
+        caret_would_move, char_idx_to_byte, empty_state_text, mask_password, move_down_selection,
+        parse_color, rerank_if_query_changed, row_key, with_cursor, word_boundary_back,
     };
     use crate::picker::state::VimMode;
     use std::cell::Cell;
@@ -1924,6 +2126,36 @@ mod tests {
         // " | " → walks back past all whitespace to 0.
         let s = "   ";
         assert_eq!(word_boundary_back(s, 3), 0);
+    }
+
+    // ── caret_would_move tests ────────────────────────────────────────────
+
+    #[test]
+    fn right_binding_fires_only_at_query_end() {
+        let right: crate::picker::keyspec::KeySpec = "Right".parse().unwrap();
+        assert!(!caret_would_move(&right, 0, 0), "empty query");
+        assert!(!caret_would_move(&right, 3, 3), "caret at end");
+        assert!(
+            caret_would_move(&right, 1, 3),
+            "caret mid-query moves instead"
+        );
+        let end: crate::picker::keyspec::KeySpec = "End".parse().unwrap();
+        assert!(caret_would_move(&end, 0, 2));
+    }
+
+    #[test]
+    fn left_binding_fires_only_at_query_start() {
+        let left: crate::picker::keyspec::KeySpec = "Left".parse().unwrap();
+        assert!(!caret_would_move(&left, 0, 3));
+        assert!(caret_would_move(&left, 2, 3));
+        let home: crate::picker::keyspec::KeySpec = "Home".parse().unwrap();
+        assert!(caret_would_move(&home, 1, 3));
+    }
+
+    #[test]
+    fn other_bindings_ignore_the_caret() {
+        let del: crate::picker::keyspec::KeySpec = "Shift+Delete".parse().unwrap();
+        assert!(!caret_would_move(&del, 1, 3));
     }
 
     // ── empty_state_text tests ────────────────────────────────────────────

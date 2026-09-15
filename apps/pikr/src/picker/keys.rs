@@ -26,6 +26,12 @@ pub enum Action {
     StartEx,
     Accept,
     AcceptCustom,
+    /// A `--kb-custom` binding fired: accept like `Accept`, but exit with
+    /// `KB_CUSTOM_EXIT_BASE + index` and skip frecency/history.
+    AcceptKbCustom(usize),
+    /// A `--kb-custom KEY=PROMPT` binding fired: show its confirm card on the
+    /// highlighted row instead of accepting.
+    ConfirmKbCustom(usize),
     Cancel,
     InsertChar(char),
     Backspace,

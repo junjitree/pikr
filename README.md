@@ -57,6 +57,54 @@ pikr --show run           # run command
 echo -e "a\nb\nc" | pikr --dmenu
 ```
 
+### Custom accept keys (dmenu)
+
+`--kb-custom KEY` adds an alternate key that accepts the highlighted row. The
+row is printed exactly as with Enter, but pikr exits with **10** for the first
+binding, **11** for the second, and so on (up to 19 bindings, like rofi's
+`-kb-custom-N`), so a script can tell which key was pressed:
+
+```sh
+choice=$(printf 'home\nwork\n' | pikr --dmenu --kb-custom Shift+Delete)
+case $? in
+  0)  connect "$choice" ;;
+  10) forget  "$choice" ;;
+esac
+```
+
+`KEY` is a chord of optional modifiers (`Ctrl`, `Shift`, `Alt`, `Super`) and a
+key: a single character, `Delete`, `Backspace`, `Insert`, `Return`, `Tab`,
+`Escape`, `Space`, `Left`/`Right`/`Up`/`Down`, `Home`, `End`, `PageUp`,
+`PageDown`, or `F1`–`F12`. Modifiers match exactly (`Delete` does not fire on
+`Shift+Delete`), and bindings take precedence over the built-in keymap. With no
+matching row the typed query is printed, as with Enter. Custom accepts don't
+update frecency or query history.
+
+Append `=PROMPT` to ask first. The key then opens a confirm card showing
+`PROMPT` at the right edge of the highlighted row: Enter accepts with the
+binding's exit code, Esc or Left dismisses, and other keys are ignored while it
+is open.
+
+```sh
+choice=$(nmcli -g ssid dev wifi list | pikr --dmenu --kb-custom 'Right=Forget?')
+[ $? -eq 10 ] && nmcli connection delete "$choice"
+```
+
+### Loading state (dmenu)
+
+By default pikr reads all of stdin before opening. For a slow producer,
+`--loading TEXT` opens the window immediately and shows `TEXT` centred where the
+list will appear; the rows fill in once stdin closes. Typing works meanwhile,
+but accepting is disabled until the rows arrive.
+
+```sh
+slow_scan | pikr --dmenu --loading 'Scanning…'
+```
+
+`Left`, `Right`, `Home` and `End` bindings fire only when the query caret can't
+move that way (`Right` and `End` at the end of the query, `Left` and `Home` at
+its start), so they don't take over caret movement while editing.
+
 ## Keybindings (planned)
 
 Normal mode:

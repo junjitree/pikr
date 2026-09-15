@@ -467,3 +467,176 @@ fn password_accept_never_persists_typed_query() {
         "-P accept must not write usage.toml"
     );
 }
+
+// ── --kb-custom ─────────────────────────────────────────────────────────────
+
+/// Spawns dmenu over a fixed list with `--filter ban` and the given bindings,
+/// sends `keys`, and returns (exit code, trimmed stdout).
+///
+/// F12 leads every burst as the sacrificial key (see
+/// `accept_matched_candidate_with_return_emits_stdout`).
+fn kb_custom_run(bindings: &[&str], keys: &[Key]) -> Option<(Option<i32>, String)> {
+    if !require_tools() {
+        return None;
+    }
+    let sway = Sway::headless();
+    let mut args = vec!["--dmenu", "--filter", "ban"];
+    for b in bindings {
+        args.push("--kb-custom");
+        args.push(b);
+    }
+    let pikr = Pikr::spawn(&sway, &args, Some("apple\nbanana\ncherry\n")).unwrap();
+    let mut burst = vec![Key::F12];
+    burst.extend_from_slice(keys);
+    let out = pikr
+        .wait_with_retry(Duration::from_secs(15), Duration::from_millis(1000), || {
+            let _ = Wtype::new(&sway).keys(&burst).send();
+        })
+        .unwrap();
+    Some((out.exit_code, out.stdout.trim().to_string()))
+}
+
+/// The first binding accepts the highlighted row with exit code 10.
+#[test]
+fn kb_custom_first_binding_exits_10_with_row() {
+    let Some((code, stdout)) = kb_custom_run(&["Shift+Delete", "F2"], &[Key::ShiftDelete]) else {
+        return;
+    };
+    assert_eq!(code, Some(10), "first --kb-custom must exit 10");
+    assert_eq!(stdout, "banana", "must print the highlighted row");
+}
+
+/// Later bindings count up from 10 in flag order.
+#[test]
+fn kb_custom_second_binding_exits_11() {
+    let Some((code, stdout)) = kb_custom_run(&["Shift+Delete", "F2"], &[Key::F2]) else {
+        return;
+    };
+    assert_eq!(code, Some(11), "second --kb-custom must exit 11");
+    assert_eq!(stdout, "banana");
+}
+
+/// Plain Enter is unaffected by bindings: exit 0 with the row.
+#[test]
+fn kb_custom_enter_still_accepts_normally() {
+    let Some((code, stdout)) = kb_custom_run(&["Shift+Delete"], &[Key::Return]) else {
+        return;
+    };
+    assert_eq!(
+        code,
+        Some(0),
+        "Enter must keep exit 0 when bindings are set"
+    );
+    assert_eq!(stdout, "banana");
+}
+
+/// Modifiers match exactly: bare Delete edits the query (a no-op at the end
+/// of `ban`) instead of firing a `Shift+Delete` binding.
+#[test]
+fn kb_custom_modifiers_match_exactly() {
+    let Some((code, stdout)) = kb_custom_run(&["Shift+Delete"], &[Key::Delete, Key::Return]) else {
+        return;
+    };
+    assert_eq!(code, Some(0), "bare Delete must not fire Shift+Delete");
+    assert_eq!(stdout, "banana");
+}
+
+// ── --kb-custom KEY=PROMPT (confirm card) ───────────────────────────────────
+
+/// A prompted binding opens the card instead of exiting; Enter then accepts
+/// with the binding's exit code. `--filter ban` leaves the caret at the end
+/// of the query, so Right is free to fire.
+#[test]
+fn kb_custom_confirm_enter_accepts() {
+    let Some((code, stdout)) = kb_custom_run(&["Right=Forget?"], &[Key::Right, Key::Return]) else {
+        return;
+    };
+    assert_eq!(code, Some(10), "Enter on the confirm card must exit 10");
+    assert_eq!(stdout, "banana");
+}
+
+/// Esc dismisses the card; the following Enter is a plain accept.
+#[test]
+fn kb_custom_confirm_escape_dismisses() {
+    let Some((code, stdout)) =
+        kb_custom_run(&["Right=Forget?"], &[Key::Right, Key::Escape, Key::Return])
+    else {
+        return;
+    };
+    assert_eq!(code, Some(0), "after Esc, Enter must be a normal accept");
+    assert_eq!(stdout, "banana");
+}
+
+/// Left dismisses the card too.
+#[test]
+fn kb_custom_confirm_left_dismisses() {
+    let Some((code, _)) = kb_custom_run(&["Right=Forget?"], &[Key::Right, Key::Left, Key::Return])
+    else {
+        return;
+    };
+    assert_eq!(code, Some(0), "after Left, Enter must be a normal accept");
+}
+
+/// With the caret mid-query, Right moves the caret instead of firing.
+#[test]
+fn kb_custom_right_yields_to_caret_movement() {
+    let Some((code, _)) = kb_custom_run(&["Right=Forget?"], &[Key::Left, Key::Right, Key::Return])
+    else {
+        return;
+    };
+    assert_eq!(code, Some(0), "Right after Left only moves the caret");
+}
+
+/// While the card is open, list navigation is swallowed: the accepted row is
+/// the one the card was opened on.
+#[test]
+fn kb_custom_confirm_blocks_navigation() {
+    if !require_tools() {
+        return;
+    }
+    let sway = Sway::headless();
+    let pikr = Pikr::spawn(
+        &sway,
+        &["--dmenu", "--kb-custom", "Right=Forget?"],
+        Some("apple\nbanana\ncherry\n"),
+    )
+    .unwrap();
+    let out = pikr
+        .wait_with_retry(Duration::from_secs(15), Duration::from_millis(1000), || {
+            let _ = Wtype::new(&sway)
+                .keys(&[Key::F12, Key::Right, Key::Down, Key::Down, Key::Return])
+                .send();
+        })
+        .unwrap();
+    assert_eq!(out.exit_code, Some(10), "stderr:\n{}", out.stderr);
+    assert_eq!(
+        out.stdout.trim(),
+        "apple",
+        "Down must not move the selection under the card"
+    );
+}
+
+// ── --loading ───────────────────────────────────────────────────────────────
+
+/// With `--loading`, rows read on the background thread still land and
+/// accept normally.
+#[test]
+fn loading_rows_arrive_and_accept() {
+    if !require_tools() {
+        return;
+    }
+    let sway = Sway::headless();
+    let pikr = Pikr::spawn(
+        &sway,
+        &["--dmenu", "--loading", "Loading…", "--filter", "ban"],
+        Some("apple\nbanana\ncherry\n"),
+    )
+    .unwrap();
+    let out = pikr
+        .wait_with_retry(Duration::from_secs(15), Duration::from_millis(1000), || {
+            let _ = Wtype::new(&sway).keys(&[Key::F12, Key::Return]).send();
+        })
+        .unwrap();
+    assert_eq!(out.exit_code, Some(0), "stderr:\n{}", out.stderr);
+    assert_eq!(out.stdout.trim(), "banana");
+}

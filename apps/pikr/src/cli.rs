@@ -1,9 +1,17 @@
 //! CLI surface.
 
-use clap::{Parser, ValueEnum};
+use clap::{ArgAction, Parser, ValueEnum};
 use std::path::PathBuf;
 
+pub use crate::picker::keyspec::KbCustom;
 pub use crate::picker::state::VimMode;
+
+/// Exit code for the first `--kb-custom` binding; the Nth binding exits
+/// with `KB_CUSTOM_EXIT_BASE + N - 1`. Matches rofi's `-kb-custom-N`.
+pub const KB_CUSTOM_EXIT_BASE: i32 = 10;
+
+/// Upper bound on `--kb-custom` bindings (exit codes 10–28, as in rofi).
+pub const KB_CUSTOM_MAX: usize = 19;
 
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -61,6 +69,30 @@ pub struct Cli {
     /// the window height calculation). Defaults to 8.
     #[arg(short = 'l', long = "lines")]
     pub lines: Option<usize>,
+
+    /// dmenu mode: an alternate key that accepts the highlighted row. Prints
+    /// the row like Enter, but exits 10 for the first binding, 11 for the
+    /// second, and so on (rofi's `-kb-custom-N`), so the calling script can
+    /// tell which key was used. Repeatable, up to 19. KEY is a chord such as
+    /// `Shift+Delete`, `Ctrl+d`, `Alt+Right` or `F2`; bindings take
+    /// precedence over the built-in keymap. `KEY=PROMPT` shows PROMPT in a
+    /// confirm card on the highlighted row first: Enter accepts, Esc or Left
+    /// dismisses. Left/Right/Home/End bindings fire only when the query
+    /// caret can't move that way, so they don't steal caret movement.
+    #[arg(
+        long = "kb-custom",
+        value_name = "KEY[=PROMPT]",
+        requires = "dmenu",
+        action = ArgAction::Append
+    )]
+    pub kb_custom: Vec<KbCustom>,
+
+    /// dmenu mode: open the window immediately and show TEXT where the list
+    /// goes while stdin is still being written, e.g. `--loading Scanning…`.
+    /// Rows appear once stdin closes; accepting is disabled until then.
+    /// Without it pikr reads all of stdin before opening.
+    #[arg(long = "loading", value_name = "TEXT", requires = "dmenu")]
+    pub loading: Option<String>,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,6 +228,53 @@ mod tests {
     fn lines_default_none() {
         let cli = parse(&[]);
         assert!(cli.lines.is_none());
+    }
+
+    // ── --kb-custom ───────────────────────────────────────────────────────
+
+    #[test]
+    fn kb_custom_repeatable_in_order() {
+        let cli = parse(&["-d", "--kb-custom", "Shift+Delete", "--kb-custom", "Ctrl+d"]);
+        let want: Vec<KbCustom> = ["Shift+Delete", "Ctrl+d"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect();
+        assert_eq!(cli.kb_custom, want);
+    }
+
+    #[test]
+    fn kb_custom_with_confirm_prompt() {
+        let cli = parse(&["-d", "--kb-custom", "Right=Forget?"]);
+        assert_eq!(cli.kb_custom[0].confirm.as_deref(), Some("Forget?"));
+    }
+
+    #[test]
+    fn loading_text() {
+        let cli = parse(&["-d", "--loading", "Scanning…"]);
+        assert_eq!(cli.loading.as_deref(), Some("Scanning…"));
+    }
+
+    #[test]
+    fn loading_requires_dmenu() {
+        let err = Cli::try_parse_from(["pikr", "--loading", "x"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn kb_custom_default_empty() {
+        let cli = parse(&["-d"]);
+        assert!(cli.kb_custom.is_empty());
+    }
+
+    #[test]
+    fn kb_custom_requires_dmenu() {
+        let err = Cli::try_parse_from(["pikr", "--kb-custom", "Shift+Delete"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn kb_custom_rejects_bad_key() {
+        assert!(Cli::try_parse_from(["pikr", "-d", "--kb-custom", "Shift+Nope"]).is_err());
     }
 
     // ── Combined flags ────────────────────────────────────────────────────
