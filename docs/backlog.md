@@ -34,6 +34,22 @@
   visibility) where the no-results-hang regression lives; judged not worth the
   regression risk without a profiler confirming the win.*
 
+## Release pipeline
+
+- The Alpine `.apk` job in `.github/workflows/ci.yml` (`alpine`, named "Build
+  .apk for Alpine (x86_64)") is gated `if: false`, so every tag run skips it and
+  no release carries an Alpine package — confirmed on the v0.8.13 run, where the
+  job reported "skipped" while the other publish jobs ran. Its own comment gives
+  the cause: it downloads the `x86_64-unknown-linux-musl` tarball from the
+  release, and that target is not in the binary build matrix (the matrix builds
+  linux-gnu, both macOS targets and windows-msvc). Restoring Alpine means adding
+  the musl target back to the matrix first, then flipping the gate; the job
+  itself is written and untested since the gate went in. Not investigated: why
+  musl was dropped — it is absent from the matrix as far back as `417a2e1`
+  (2026-05-16, the workflow port from hodl), so no commit in this repo removed
+  it. Left as-is 2026-09-15: a deliberate pre-existing gate, not a v0.8.13
+  regression.
+
 ## Test harness
 
 - `pikr_bin()` in `apps/pikr/tests/e2e/support/pikr.rs` prefers an existing
