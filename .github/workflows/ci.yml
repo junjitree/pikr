@@ -85,16 +85,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Linux-first GUI: rofi replacement targets Wayland only. macOS
-        # release builds are still produced for the Homebrew tap but
+        # macOS release builds are still produced for the Homebrew tap but
         # exercising them under runtime tests adds little value while
-        # gettext-sys / floem display-detection break the matrix. Revisit
-        # when macOS / Windows become first-class targets.
-        os: [ubuntu-latest]
+        # gettext-sys / floem display-detection break the matrix. Windows
+        # runs the suite so its `#[cfg(windows)]` arms (drun Start Menu
+        # collector, icon extraction, run-mode PATHEXT) are compiled and
+        # executed somewhere — a Linux run never builds them.
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
       # See clippy job for rationale on the gtk-rs / glib-sys system deps.
-      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev
+      - if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable

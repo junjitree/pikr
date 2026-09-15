@@ -36,11 +36,6 @@
 
 ## Hardening (correct today, fragile — not defects)
 
-- Windows drun icon extraction (`modes/drun_icons_windows.rs`, called from a
-  rayon `par_iter` in drun) writes cache PNGs without a lock; same-target
-  duplicates or a first-miss storm on `__fallback__.png` can interleave
-  truncate/write and yield a corrupt PNG (identical bytes in practice; cosmetic,
-  Windows-only, survives until cache wipe).
 - Symlinked-dir mtime cache blindness; coarse-granularity same-tick cache
   staleness; non-atomic state writes; `--lines 0` / `--width 0`; row-key
   Arc-pointer fragility; non-UTF8 PATH names. (review pass 2026-08-06)
@@ -86,8 +81,8 @@ dedupe `9cc7dfb`).
 ### Coverage
 
 - Whole codebase read: entry/app/cli/config, all modes, picker, ui, xtask,
-  tests. Windows/macOS arms read but NOT executed locally — the documented
-  PNG-lock race (Hardening) is in that gap.
+  tests. Windows/macOS arms read but NOT executed locally — the icon-cache
+  PNG write race (fixed 2026-09-15) was in that gap.
 
 ## audit review 2026-08-06
 
@@ -253,15 +248,6 @@ regression test `cache_written_0600_like_state_files`. The remaining hardening
 item was verified by the orchestrator at the cited lines (the perms one
 empirically on this host).
 
-### Hardening (correct today, fragile — not defects)
-
-- **`drun_icons_windows.rs:185-186` — `stride = width * 4` u32 multiply, then
-  `vec![0u8; (stride * height) as usize]`.** A wrap under-allocates the
-  `GetDIBits` buffer (unsafe overflow); a non-wrap huge value OOM-aborts. GDI
-  realistically bounds icon dimensions to tiny sizes; code-traced only on this
-  Linux host. If Windows CI lands: `checked_mul` + a dimension cap. (Also
-  flagged by the evening review pass — cross-cutting.)
-
 ### Cleared (suspected, traced, disproved — verified by the orchestrator unless marked)
 
 - **`sh -c` in the clipboard pipe** (`clipboard.rs:60-74`) — the only
@@ -314,9 +300,9 @@ empirically on this host).
 - Summary: 0 findings (0/0/0/0). Overall risk low — every execution path is
   argv-based, the cross-domain inputs (clipboard, dmenu stdin) are handled
   safely, and the tracked items remain the only knowns. Fix first (1) — drun
-  cache through `write_private_state` — DONE 2026-08-12. Remaining: (2)
-  `checked_mul` + dimension cap in `hicon_to_png` if Windows CI ever lands, (3)
-  tracked dmenu stdin cap / cache re-validation if the threat model tightens.
+  cache through `write_private_state` — DONE 2026-08-12; (2) overflow-checked
+  buffer size in `hicon_to_png` — DONE 2026-09-15. Remaining: (3) tracked dmenu
+  stdin cap / cache re-validation if the threat model tightens.
 
 ## tidy review 2026-08-06
 

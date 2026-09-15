@@ -25,6 +25,22 @@ and this project adheres to
 - `Left`/`Right`/`Home`/`End` bindings fire only when the query caret can't move
   that way, so binding them doesn't break caret movement while editing.
 
+### Fixed
+
+- Windows drun icons: cached PNGs under `%LOCALAPPDATA%\pikr\icon-cache` are now
+  written to a temp file and renamed into place. The parallel Start Menu walk
+  could interleave two writes to the same file (a shared target, or the generic
+  `__fallback__.png`) and leave a truncated icon cached until the cache was
+  wiped. The icon bitmap buffer size is also overflow-checked before `GetDIBits`
+  fills it.
+
+### Security
+
+- `-P` / `--password`: the empty-state hint no longer echoes the query. With no
+  matching rows it printed `No results for "<query>"`, showing the masked secret
+  in plain text directly beneath the masked input. It now reads `No results`,
+  without the text or its length.
+
 ## [0.8.12] - 2026-08-13
 
 ### Security

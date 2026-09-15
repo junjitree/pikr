@@ -482,6 +482,19 @@ pub(crate) fn mask_password(enabled: bool, text: &str) -> String {
     }
 }
 
+/// Empty-state hint for a query with no matching rows. With `--password` the
+/// query is never echoed — not even masked, since a masked echo still leaks
+/// the length.
+pub(crate) fn empty_state_text(query: &str, password: bool) -> String {
+    if query.is_empty() {
+        "No entries.".to_owned()
+    } else if password {
+        "No results".to_owned()
+    } else {
+        format!("No results for \u{201C}{query}\u{201D}")
+    }
+}
+
 // ─── Message modal view ───────────────────────────────────────────────────────
 
 /// Non-interactive message overlay (rofi `--message` parity, issue #15).
@@ -1234,11 +1247,7 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
     let empty_msg = Stack::horizontal((Label::derived(move || {
         let _ = rev.get();
         let s = state_empty.lock().unwrap();
-        if s.picker.query.get().is_empty() {
-            "No entries.".to_string()
-        } else {
-            format!("No results for \u{201C}{}\u{201D}", s.picker.query.get())
-        }
+        empty_state_text(&s.picker.query.get(), s.password)
     })
     .style(move |s| crate::ui::css::apply(s, &sheet_empty_text, "label", &["empty-row-text"])),))
     .style(move |s| {
@@ -1877,8 +1886,8 @@ pub fn picker_view(state: Arc<Mutex<AppState>>, startup_started: Instant) -> imp
 #[cfg(test)]
 mod tests {
     use super::{
-        caret_would_move, char_idx_to_byte, mask_password, move_down_selection, parse_color,
-        rerank_if_query_changed, row_key, with_cursor, word_boundary_back,
+        caret_would_move, char_idx_to_byte, empty_state_text, mask_password, move_down_selection,
+        parse_color, rerank_if_query_changed, row_key, with_cursor, word_boundary_back,
     };
     use crate::picker::state::VimMode;
     use std::cell::Cell;
@@ -2147,6 +2156,30 @@ mod tests {
     fn other_bindings_ignore_the_caret() {
         let del: crate::picker::keyspec::KeySpec = "Shift+Delete".parse().unwrap();
         assert!(!caret_would_move(&del, 1, 3));
+    }
+
+    // ── empty_state_text tests ────────────────────────────────────────────
+
+    #[test]
+    fn empty_state_no_query() {
+        assert_eq!(empty_state_text("", false), "No entries.");
+        assert_eq!(empty_state_text("", true), "No entries.");
+    }
+
+    #[test]
+    fn empty_state_echoes_query() {
+        assert_eq!(
+            empty_state_text("fire", false),
+            "No results for \u{201C}fire\u{201D}"
+        );
+    }
+
+    #[test]
+    fn empty_state_password_hides_query_and_length() {
+        let text = empty_state_text("hunter2", true);
+        assert_eq!(text, "No results");
+        assert!(!text.contains("hunter2"));
+        assert!(!text.contains('\u{25CF}'));
     }
 
     // ── mask_password tests ───────────────────────────────────────────────

@@ -32,6 +32,11 @@ fn prints_help() {
 /// is exercised by the e2e harness (`tests/e2e/`), which runs pikr inside
 /// a `sway --headless` fixture so dev machines don't see a stray window
 /// pop on every `cargo test` invocation.
+///
+/// Gated like the guard itself (`app::run`): Windows and macOS have no
+/// Wayland requirement and open a regular top-level window instead, so there
+/// the test would launch a live picker rather than hit a guard.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[test]
 fn missing_wayland_display_exits_with_guard() {
     let out = Command::new(bin())
