@@ -34,6 +34,20 @@
   visibility) where the no-results-hang regression lives; judged not worth the
   regression risk without a profiler confirming the win.*
 
+## Test harness
+
+- `pikr_bin()` in `apps/pikr/tests/e2e/support/pikr.rs` prefers an existing
+  `target/release/pikr` and only builds when the file is absent, never checking
+  whether it is older than the sources. A local `cargo test` after pulling new
+  work therefore drives the previous release build: on 2026-09-15 a stale 0.8.12
+  binary failed all eleven `--kb-custom` / `--loading` e2e tests with clap's
+  `unexpected argument` and exit 2, which reads as a product regression rather
+  than a stale artifact. CI never sees it because each job builds fresh. Fix is
+  to always run `cargo build --release --bin pikr` (a no-op when current)
+  instead of the `exists()` short-circuit, or to honour a `PIKR_BIN` override as
+  `smoke.rs` already does. Not changed here: found while cutting v0.8.13 and
+  unrelated to that release.
+
 ## Hardening (correct today, fragile — not defects)
 
 - Symlinked-dir mtime cache blindness; coarse-granularity same-tick cache
@@ -68,22 +82,22 @@
 ## Windows support pass 2026-09-15
 
 First session run on a Windows 11 host; the `#[cfg(windows)]` arms were
-compiled, tested and exercised here, and CI now runs the test suite on
-ubuntu, macOS and Windows.
+compiled, tested and exercised here, and CI now runs the test suite on ubuntu,
+macOS and Windows.
 
 ### Open
 
-- **`-P` still leaks through filtering.** Masking the calc live row and
-  dropping match highlights (`AppState::hide_match_positions_if_password`)
-  closed the direct echoes, but which dmenu / calc-history rows stay visible
-  still reveals which rows match the secret, and calc's dedupe hides a history
-  row exactly equal to the live expression. Inherent to filtering on a secret;
-  the options are to document it or to stop filtering under `-P` (show all rows
-  unranked). Needs a product call.
+- **`-P` still leaks through filtering.** Masking the calc live row and dropping
+  match highlights (`AppState::hide_match_positions_if_password`) closed the
+  direct echoes, but which dmenu / calc-history rows stay visible still reveals
+  which rows match the secret, and calc's dedupe hides a history row exactly
+  equal to the live expression. Inherent to filtering on a secret; the options
+  are to document it or to stop filtering under `-P` (show all rows unranked).
+  Needs a product call.
 - **Windows startup is at the edge of the 500 ms usable-picker target.** Release
-  build, warm drun cache: entries collected in ~4 ms but first paint at
-  ~540–925 ms across runs — the wgpu/Vulkan init dominates, not pikr's own
-  work. Not profiled further.
+  build, warm drun cache: entries collected in ~4 ms but first paint at ~540–925
+  ms across runs — the wgpu/Vulkan init dominates, not pikr's own work. Not
+  profiled further.
 - **Windows window posture from issue #9 is not done:** no always-on-top, no
   `WS_EX_TOOLWINDOW` (pikr shows in Alt-Tab and the taskbar), decorations left
   to the default `WindowConfig`. Observed: the window does take foreground when
@@ -97,8 +111,8 @@ ubuntu, macOS and Windows.
 
 - drun accept on Windows was not driven through the GUI keystroke path; only
   `drun_windows::launch` was called directly (Notepad from its WindowsApps
-  package and `cmd.exe` from its known-folder id both started). dmenu, emoji
-  and calc accepts WERE driven end-to-end with synthesized keys.
+  package and `cmd.exe` from its known-folder id both started). dmenu, emoji and
+  calc accepts WERE driven end-to-end with synthesized keys.
 - History/frecency persistence on Windows is covered by the path tests
   (`state_file_path_resolves_under_a_pikr_dir`,
   `default_path_resolves_under_a_pikr_dir`); a real accept writing
@@ -126,8 +140,8 @@ dedupe `9cc7dfb`).
 ### Coverage
 
 - Whole codebase read: entry/app/cli/config, all modes, picker, ui, xtask,
-  tests. Windows/macOS arms read but NOT executed locally — the icon-cache
-  PNG write race (fixed 2026-09-15) was in that gap.
+  tests. Windows/macOS arms read but NOT executed locally — the icon-cache PNG
+  write race (fixed 2026-09-15) was in that gap.
 
 ## audit review 2026-08-06
 
